@@ -10,7 +10,8 @@
           "name": "Qwen 3.6 27B Balanced",
           "reasoning": true,
           "input": [
-            "text"
+            "text",
+            "image"
           ],
           "contextWindow": 131072,
           "maxTokens": 16384,
