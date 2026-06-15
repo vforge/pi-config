@@ -1,0 +1,34 @@
+{
+  "providers": {
+    "local-openai": {
+      "baseUrl": "${LLAMACPP_BASE_URL}",
+      "api": "openai-completions",
+      "apiKey": "${LLAMACPP_API_KEY}",
+      "models": [
+        {
+          "id": "qwen3.6-27b-balanced",
+          "name": "Qwen 3.6 27B Balanced",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 131072,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
+            "thinkingFormat": "qwen-chat-template"
+          }
+        }
+      ]
+    }
+  }
+}

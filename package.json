@@ -1,0 +1,31 @@
+{
+  "name": "vforge-pi-config",
+  "version": "0.1.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "dependencies": {
+    "linkedom": "^0.18.5"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/ssh/index.ts",
+      "./extensions/cwd-skills.ts",
+      "./extensions/list-skills.ts",
+      "./extensions/web-tools/index.ts"
+    ]
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}

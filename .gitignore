@@ -1,0 +1,35 @@
+# secrets / machine-local config
+.env
+.env.*
+!.env.example
+auth.json
+trust.json
+sessions/
+bin/
+
+# real Pi config/state files; commit *.example.json templates instead
+settings.json
+models.json
+keybindings.json
+AGENTS.md
+SYSTEM.md
+APPEND_SYSTEM.md
+
+# project-local Pi install/cache dirs if this repo is used as a cwd
+.pi/
+npm/
+git/
+
+# dependencies
+node_modules/
+
+# logs / temp
+*.log
+.tmp/
+tmp/
+
+# OS/editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
