@@ -50,11 +50,49 @@ export LLAMACPP_API_KEY=dummy
 
 ## SSH usage
 
+The `ssh` extension adds a Pi flag:
+
 ```bash
 pi --ssh user@host
 pi --ssh user@host:/remote/path
-pissh user@host:/remote/path
 ```
+
+When `--ssh` is set, Pi still runs locally, but the built-in tools operate on the remote machine:
+
+- `read`, `write`, `edit`
+- `bash` and user `!` commands
+- `grep`, `find`, `ls`
+
+### `pissh` dotfiles wrapper
+
+My dotfiles include a small convenience wrapper at `~/.dotfiles/bin/pissh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $(basename "$0") user@host[:/remote/path] [additional pi args...]" >&2
+  echo "Example: $(basename "$0") dev@mybox:/srv/app" >&2
+  exit 1
+fi
+
+remote="$1"
+shift || true
+
+exec pi --ssh "$remote" "$@"
+```
+
+Usage:
+
+```bash
+pissh user@host
+pissh user@host:/remote/path
+pissh user@host:/remote/path -p "/skills"
+pissh user@host:/remote/path -p "List files, find TypeScript files, and grep for TODO"
+```
+
+`pissh` is not installed by this Pi package; it comes from `vforge/dotfiles` and must be on `PATH`. It simply forwards its first argument to `pi --ssh` and passes all remaining arguments through to Pi.
 
 Remote requirements:
 
