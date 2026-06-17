@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ---------------------------------------------------------------------------
-// SearXNG config — reads SEARXNG_URL from root .env or environment
+// Web tool config — reads URLs from root .env or environment
 // ---------------------------------------------------------------------------
 function loadEnv() {
   const home = process.env.HOME ?? "";
@@ -34,11 +34,19 @@ function loadEnv() {
 
 loadEnv();
 
+function normalizeBaseUrl(value: string): string {
+  const withProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)
+    ? value
+    : `http://${value}`;
+  return withProtocol.replace(/\/+$/, "");
+}
+
 function getSearxngUrl(): string {
-  return (
-    process.env.SEARXNG_URL ??
-    "http://localhost:8080"
-  ).replace(/\/+$/, ""); // trim trailing slash
+  return normalizeBaseUrl(process.env.SEARXNG_URL ?? "http://localhost:8080");
+}
+
+function getFirecrawlUrl(): string {
+  return normalizeBaseUrl(process.env.FIRECRAWL_URL ?? "http://localhost:3002");
 }
 
 // ---------------------------------------------------------------------------
@@ -51,11 +59,11 @@ interface SearchResult {
   snippet: string;
 }
 
-async function searchSearxng(query: string, maxResults: number): Promise<SearchResult[]> {
+async function searchSearxng(query: string, maxResults: number, signal?: AbortSignal): Promise<SearchResult[]> {
   const baseUrl = getSearxngUrl();
   const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=auto`;
 
-  const response = await fetch(url, { signal: undefined }); // ctx.signal passed below
+  const response = await fetch(url, { signal });
   if (!response.ok) {
     throw new Error(`SearXNG returned ${response.status}: ${response.statusText}`);
   }
@@ -83,9 +91,10 @@ function htmlToText(html: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
-async function fetchPage(url: string): Promise<{ title: string; text: string }> {
+async function fetchPage(url: string, signal?: AbortSignal): Promise<{ title: string; text: string }> {
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; pi-coding-agent/1.0)" },
+    signal,
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
@@ -104,6 +113,71 @@ async function fetchPage(url: string): Promise<{ title: string; text: string }> 
   return { title, text: text.slice(0, 50_000) };
 }
 
+async function extractWithFirecrawl(
+  url: string,
+  options: {
+    format: "markdown" | "html";
+    onlyMainContent: boolean;
+    waitFor?: number;
+    timeout?: number;
+  },
+  signal?: AbortSignal,
+): Promise<{ title: string; text: string; metadata: Record<string, unknown> }> {
+  const baseUrl = getFirecrawlUrl();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; pi-coding-agent/1.0)",
+  };
+
+  if (process.env.FIRECRAWL_API_KEY) {
+    headers.Authorization = `Bearer ${process.env.FIRECRAWL_API_KEY}`;
+  }
+
+  const response = await fetch(`${baseUrl}/v1/scrape`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      url,
+      formats: [options.format],
+      onlyMainContent: options.onlyMainContent,
+      waitFor: options.waitFor,
+      timeout: options.timeout,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Firecrawl returned ${response.status}: ${response.statusText}${body ? ` — ${body.slice(0, 500)}` : ""}`);
+  }
+
+  const payload = (await response.json()) as {
+    success?: boolean;
+    error?: string;
+    data?: {
+      markdown?: string;
+      html?: string;
+      rawHtml?: string;
+      metadata?: Record<string, unknown>;
+    };
+  };
+
+  if (payload.success === false) {
+    throw new Error(payload.error ?? "Firecrawl scrape failed");
+  }
+
+  const data = payload.data ?? {};
+  const metadata = data.metadata ?? {};
+  const title = typeof metadata.title === "string" && metadata.title.length > 0
+    ? metadata.title
+    : url;
+  const text = options.format === "html"
+    ? (data.html ?? data.rawHtml ?? data.markdown ?? "")
+    : (data.markdown ?? data.html ?? data.rawHtml ?? "");
+
+  return { title, text: text.slice(0, 100_000), metadata };
+}
+
 // ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
@@ -113,6 +187,12 @@ export default function (pi: ExtensionAPI) {
     if (!process.env.SEARXNG_URL && getSearxngUrl().includes("localhost")) {
       ctx.ui.notify(
         "web-tools: SEARXNG_URL not set — defaults to http://localhost:8080",
+        "info",
+      );
+    }
+    if (!process.env.FIRECRAWL_URL) {
+      ctx.ui.notify(
+        "web-tools: FIRECRAWL_URL not set — defaults to http://localhost:3002",
         "info",
       );
     }
@@ -141,7 +221,7 @@ export default function (pi: ExtensionAPI) {
       onUpdate?.({ content: [{ type: "text", text: `Searching for "${query}"...` }] });
 
       try {
-        const results = await searchSearxng(query, maxResults);
+        const results = await searchSearxng(query, maxResults, _signal);
 
         if (results.length === 0) {
           return {
@@ -188,7 +268,7 @@ export default function (pi: ExtensionAPI) {
       onUpdate?.({ content: [{ type: "text", text: `Fetching ${url}...` }] });
 
       try {
-        const { title, text } = await fetchPage(url);
+        const { title, text } = await fetchPage(url, _signal);
 
         return {
           content: [{
@@ -200,6 +280,77 @@ export default function (pi: ExtensionAPI) {
         const msg = err instanceof Error ? err.message : String(err);
         return {
           content: [{ type: "text", text: `Failed to fetch ${url}: ${msg}` }],
+          isError: true,
+        };
+      }
+    },
+  });
+
+  // ── web_extract ───────────────────────────────────────────────────────────
+  pi.registerTool({
+    name: "web_extract",
+    label: "Web Extract",
+    description: "Extract clean page content from a URL using a locally hosted Firecrawl instance.",
+    promptSnippet: "Extract clean markdown or HTML from a web page using Firecrawl.",
+    promptGuidelines: [
+      "Use web_extract when fetch_url returns noisy content, misses JS-rendered page content, or the user asks to extract page content.",
+      "web_extract uses FIRECRAWL_URL, defaulting to http://localhost:3002 for the local Firecrawl instance.",
+    ],
+    parameters: Type.Object({
+      url: Type.String({ description: "URL to extract content from." }),
+      format: Type.Optional(
+        Type.Union([
+          Type.Literal("markdown"),
+          Type.Literal("html"),
+        ], { default: "markdown", description: "Output format (default: markdown)." }),
+      ),
+      only_main_content: Type.Optional(
+        Type.Boolean({ default: true, description: "Extract only the main page content when possible (default: true)." }),
+      ),
+      wait_for: Type.Optional(
+        Type.Integer({ description: "Optional milliseconds for Firecrawl to wait before extracting." }),
+      ),
+      timeout: Type.Optional(
+        Type.Integer({ description: "Optional Firecrawl timeout in milliseconds." }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+      const url = params.url;
+      const format = params.format ?? "markdown";
+      const onlyMainContent = params.only_main_content ?? true;
+
+      onUpdate?.({ content: [{ type: "text", text: `Extracting ${url} with Firecrawl...` }] });
+
+      try {
+        const { title, text, metadata } = await extractWithFirecrawl(
+          url,
+          {
+            format,
+            onlyMainContent,
+            waitFor: params.wait_for,
+            timeout: params.timeout,
+          },
+          _signal,
+        );
+
+        if (!text.trim()) {
+          return {
+            content: [{ type: "text", text: `Firecrawl extracted no ${format} content from ${url}.` }],
+            details: { metadata },
+          };
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: `--- Extracted: ${title} ---\nURL: ${url}\nExtractor: Firecrawl (${getFirecrawlUrl()})\nFormat: ${format}\n\n${text}`,
+          }],
+          details: { metadata },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Firecrawl extraction failed for ${url}: ${msg}\n\nMake sure FIRECRAWL_URL is set and the Firecrawl instance is reachable.` }],
           isError: true,
         };
       }

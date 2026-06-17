@@ -34,7 +34,10 @@ After changing extensions in an active Pi session, run:
   - user `!` commands
 - `cwd-skills` — injects skills from `<cwd>/.skills/`, including SSH remote cwd.
 - `list-skills` — adds `/skills` command for loaded skills and `.skills/` skills.
-- `web-tools` — adds `web_search` and `fetch_url` tools backed by SearXNG/fetch.
+- `web-tools` — adds web tools backed by SearXNG, fetch, and local Firecrawl:
+  - `web_search`
+  - `fetch_url`
+  - `web_extract`
 
 ## Environment
 
@@ -42,11 +45,15 @@ Copy `.env.example` somewhere private or export the variables in your shell:
 
 ```bash
 export SEARXNG_URL=http://localhost:8080
+export FIRECRAWL_URL=http://localhost:3002
 export LLAMACPP_BASE_URL=http://localhost:1234/v1
 export LLAMACPP_API_KEY=dummy
 ```
 
-`web-tools` uses `SEARXNG_URL`, defaulting to `http://localhost:8080`.
+`web-tools` uses:
+
+- `SEARXNG_URL`, defaulting to `http://localhost:8080`
+- `FIRECRAWL_URL`, defaulting to `http://localhost:3002`
 
 ## SSH usage
 
