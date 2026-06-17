@@ -28,6 +28,9 @@ node_modules/
 .tmp/
 tmp/
 
+# MCP local config (may contain secrets)
+*.local.json
+
 # OS/editor
 .DS_Store
 *.swp

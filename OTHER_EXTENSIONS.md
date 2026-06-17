@@ -12,9 +12,13 @@ This file is documentation only. It is **not** consumed by Pi and should not be 
 
 | Name | Source | Type | Scope | Why I use it | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `pi-emote` | <https://github.com/JarodMica/jarods-pi-extensions/tree/master/extensions/pi-emote> | extension | global | Adds emote/status flavor to Pi | From JarodMica's `jarods-pi-extensions` repo |
-| `pi-mcp-adapter` | `npm:pi-mcp-adapter` | package / extension | global | MCP adapter for Pi | Install with `pi install npm:pi-mcp-adapter` |
-| _TODO_ | `npm:...` / `git:...` / local path | package / extension / skill / prompt / theme | global / project | _TODO_ | _TODO_ |
+| `vforge/pi-config` | `git:git@github.com:vforge/pi-config.git` | package / extension | global | My personal Pi config — ssh, cwd-skills, list-skills, web-tools | Local dev repo; contains all my custom extensions |
+| `pi-emote` | `git:github.com/cgxeiji/pi-emote` | extension | global | Adds emote/status flavor to Pi | Fork of JarodMica's extension |
+| `pi-mcp-adapter` | `npm:pi-mcp-adapter` | package / extension | global | MCP adapter for Pi | Connects MCP servers (filesystem, github) via proxy tool |
+| `@juicesharp/rpiv-btw` | `npm:@juicesharp/rpiv-btw` | package / extension | global | BTW (by-the-way) skill | Quick contextual notes |
+| `@juicesharp/rpiv-todo` | `npm:@juicesharp/rpiv-todo` | package / extension | global | Todo management skill | Task tracking within sessions |
+| `@juicesharp/rpiv-ask-user-question` | `npm:@juicesharp/rpiv-ask-user-question` | package / extension | global | Ask user questions interactively | Structured decision prompts |
+| `pi-subagents` | `npm:pi-subagents` | package / extension | global | Sub-agent orchestration for Pi | oracle, planner, researcher, reviewer, scout, worker |
 
 ## Trying / evaluating
 
@@ -39,7 +43,7 @@ git:git@github.com:user/repo@tag-or-commit
 ./relative/local/path
 ```
 
-Prefer pinned git tags/commits for packages I expect to reproduce later.
+Packages are updated frequently — no version pins needed.
 
 ## Maintenance commands
 

@@ -5,6 +5,95 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ---------------------------------------------------------------------------
+// In-memory cache with TTL — avoids redundant network calls within a session
+// ---------------------------------------------------------------------------
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+const cache = new Map<string, CacheEntry<unknown>>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function cacheGet<T>(key: string): T | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    cache.delete(key);
+    return undefined;
+  }
+  return entry.value as T;
+}
+
+function cacheSet<T>(key: string, value: T): void {
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+}
+
+// Periodically clean expired entries (every 2 minutes)
+const cacheCleanupInterval = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (now > entry.expiresAt) cache.delete(key);
+  }
+}, 2 * 60 * 1000);
+
+// Prevent the interval from keeping the process alive
+if (cacheCleanupInterval.unref) cacheCleanupInterval.unref();
+
+// ---------------------------------------------------------------------------
+// Retry with exponential backoff — handles transient network failures
+// ---------------------------------------------------------------------------
+interface RetryOptions {
+  maxRetries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+const DEFAULT_RETRY_OPTIONS: Required<RetryOptions> = {
+  maxRetries: 2,
+  baseDelayMs: 1000,
+  maxDelayMs: 8000,
+};
+
+function withRetry<T>(fn: () => Promise<T>, options?: RetryOptions): Promise<T> {
+  const cfg = { ...DEFAULT_RETRY_OPTIONS, ...options };
+  let lastError: Error | undefined;
+
+  return Promise.resolve().then(() => {
+    let attempt = 0;
+    async function tryOnce(): Promise<T> {
+      try {
+        return await fn();
+      } catch (err) {
+        const isLast = attempt >= cfg.maxRetries;
+        lastError = err instanceof Error ? err : new Error(String(err));
+
+        if (isLast) {
+          throw lastError;
+        }
+
+        attempt++;
+        const delay = Math.min(
+          cfg.baseDelayMs * Math.pow(2, attempt - 1),
+          cfg.maxDelayMs,
+        );
+
+        // Add jitter to avoid thundering herd
+        const jitteredDelay = delay * (0.5 + Math.random() * 0.5);
+
+        await new Promise((resolve) => setTimeout(resolve, jitteredDelay));
+        return tryOnce();
+      }
+    }
+
+    return tryOnce();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Web tool config — reads URLs from root .env or environment
 // ---------------------------------------------------------------------------
 function loadEnv() {
@@ -60,23 +149,26 @@ interface SearchResult {
 }
 
 async function searchSearxng(query: string, maxResults: number, signal?: AbortSignal): Promise<SearchResult[]> {
-  const baseUrl = getSearxngUrl();
-  const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=auto`;
+  const cacheKey = `search:${query}:${maxResults}`;
+  const cached = cacheGet<SearchResult[]>(cacheKey);
+  if (cached) return cached;
 
-  const response = await fetch(url, { signal });
-  if (!response.ok) {
-    throw new Error(`SearXNG returned ${response.status}: ${response.statusText}`);
-  }
+  const results = await withRetry(async () => {
+    const baseUrl = getSearxngUrl();
+    const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=auto`;
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`SearXNG returned ${response.status}: ${response.statusText}`);
+    const data = (await response.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> };
+    return (data.results ?? [])
+      .slice(0, maxResults)
+      .map((r, i) => ({
+        title: r.title ?? "(no title)",
+        url: r.url ?? "",
+        snippet: (r.content ?? "").slice(0, 300),
+      }));
+  });
 
-  const data = (await response.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> };
-  const results = (data.results ?? [])
-    .slice(0, maxResults)
-    .map((r, i) => ({
-      title: r.title ?? "(no title)",
-      url: r.url ?? "",
-      snippet: (r.content ?? "").slice(0, 300),
-    }));
-
+  cacheSet(cacheKey, results);
   return results;
 }
 
@@ -92,25 +184,34 @@ function htmlToText(html: string): string {
 }
 
 async function fetchPage(url: string, signal?: AbortSignal): Promise<{ title: string; text: string }> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; pi-coding-agent/1.0)" },
-    signal,
+  const cacheKey = `fetch:${url}`;
+  const cached = cacheGet<{ title: string; text: string }>(cacheKey);
+  if (cached) return cached;
+
+  const result = await withRetry(async () => {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; pi-coding-agent/1.0)" },
+      signal,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+    const contentType = response.headers.get("content-type") ?? "";
+    let html = await response.text();
+
+    // If it's JSON, return as-is
+    if (contentType.includes("application/json")) {
+      return { title: url, text: html.slice(0, 50_000) };
+    }
+
+    const { document } = parseHTML(html);
+    const title = document.title || url;
+    const text = htmlToText(html);
+
+    return { title, text: text.slice(0, 50_000) };
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
-  const contentType = response.headers.get("content-type") ?? "";
-  let html = await response.text();
-
-  // If it's JSON, return as-is
-  if (contentType.includes("application/json")) {
-    return { title: url, text: html.slice(0, 50_000) };
-  }
-
-  const { document } = parseHTML(html);
-  const title = document.title || url;
-  const text = htmlToText(html);
-
-  return { title, text: text.slice(0, 50_000) };
+  cacheSet(cacheKey, result);
+  return result;
 }
 
 async function extractWithFirecrawl(
@@ -123,6 +224,10 @@ async function extractWithFirecrawl(
   },
   signal?: AbortSignal,
 ): Promise<{ title: string; text: string; metadata: Record<string, unknown> }> {
+  const cacheKey = `firecrawl:${url}:${options.format}:${options.onlyMainContent}`;
+  const cached = cacheGet<{ title: string; text: string; metadata: Record<string, unknown> }>(cacheKey);
+  if (cached) return cached;
+
   const baseUrl = getFirecrawlUrl();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -133,49 +238,54 @@ async function extractWithFirecrawl(
     headers.Authorization = `Bearer ${process.env.FIRECRAWL_API_KEY}`;
   }
 
-  const response = await fetch(`${baseUrl}/v1/scrape`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      url,
-      formats: [options.format],
-      onlyMainContent: options.onlyMainContent,
-      waitFor: options.waitFor,
-      timeout: options.timeout,
-    }),
-    signal,
+  const result = await withRetry(async () => {
+    const response = await fetch(`${baseUrl}/v1/scrape`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        url,
+        formats: [options.format],
+        onlyMainContent: options.onlyMainContent,
+        waitFor: options.waitFor,
+        timeout: options.timeout,
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Firecrawl returned ${response.status}: ${response.statusText}${body ? ` — ${body.slice(0, 500)}` : ""}`);
+    }
+
+    const payload = (await response.json()) as {
+      success?: boolean;
+      error?: string;
+      data?: {
+        markdown?: string;
+        html?: string;
+        rawHtml?: string;
+        metadata?: Record<string, unknown>;
+      };
+    };
+
+    if (payload.success === false) {
+      throw new Error(payload.error ?? "Firecrawl scrape failed");
+    }
+
+    const data = payload.data ?? {};
+    const metadata = data.metadata ?? {};
+    const title = typeof metadata.title === "string" && metadata.title.length > 0
+      ? metadata.title
+      : url;
+    const text = options.format === "html"
+      ? (data.html ?? data.rawHtml ?? data.markdown ?? "")
+      : (data.markdown ?? data.html ?? data.rawHtml ?? "");
+
+    return { title, text: text.slice(0, 100_000), metadata };
   });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`Firecrawl returned ${response.status}: ${response.statusText}${body ? ` — ${body.slice(0, 500)}` : ""}`);
-  }
-
-  const payload = (await response.json()) as {
-    success?: boolean;
-    error?: string;
-    data?: {
-      markdown?: string;
-      html?: string;
-      rawHtml?: string;
-      metadata?: Record<string, unknown>;
-    };
-  };
-
-  if (payload.success === false) {
-    throw new Error(payload.error ?? "Firecrawl scrape failed");
-  }
-
-  const data = payload.data ?? {};
-  const metadata = data.metadata ?? {};
-  const title = typeof metadata.title === "string" && metadata.title.length > 0
-    ? metadata.title
-    : url;
-  const text = options.format === "html"
-    ? (data.html ?? data.rawHtml ?? data.markdown ?? "")
-    : (data.markdown ?? data.html ?? data.rawHtml ?? "");
-
-  return { title, text: text.slice(0, 100_000), metadata };
+  cacheSet(cacheKey, result);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

@@ -119,3 +119,27 @@ Do not commit/copy these from `~/.pi/agent`:
 - package `node_modules/`
 
 Use `settings.example.json` and `models.example.json` as templates for machine-local Pi config.
+
+## Model choices
+
+The default in `settings.example.json` uses a **local-first** profile (Qwen 3.6 27B via llama.cpp) for privacy and low latency:
+
+```json
+{
+  "defaultProvider": "local-openai",
+  "defaultModel": "qwen3.6-27b-balanced",
+  "defaultThinkingLevel": "medium",
+  "theme": "dark"
+}
+```
+
+To switch to a **cloud-first** profile (GPT-5.5 via GitHub Copilot) for stronger reasoning and higher output limits, update `~/.pi/agent/settings.json`:
+
+```json
+{
+  "defaultProvider": "github-copilot",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "medium",
+  "theme": "dark"
+}
+```

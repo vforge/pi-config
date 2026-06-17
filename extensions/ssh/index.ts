@@ -115,8 +115,24 @@ function createRemoteWriteOps(remote: string, remoteCwd: string, localCwd: strin
 	const toRemote = (p: string) => toRemotePath(p, remoteCwd, localCwd);
 	return {
 		writeFile: async (p, content) => {
-			const b64 = Buffer.from(content).toString("base64");
-			await sshExec(remote, `printf %s ${shQuote(b64)} | base64 -d > ${shQuote(toRemote(p))}`);
+			const remotePath = toRemote(p);
+			return new Promise((resolve, reject) => {
+				const cmd = `cat > ${shQuote(remotePath)}`;
+				const child = spawn("ssh", [remote, cmd], { stdio: ["pipe", "pipe", "pipe"] });
+				const errChunks: Buffer[] = [];
+				child.stdout.on("data", () => {});
+				child.stderr.on("data", (data) => errChunks.push(data));
+				child.stdin.write(content);
+				child.stdin.end();
+				child.on("error", reject);
+				child.on("close", (code) => {
+					if (code !== 0) {
+						reject(new Error(`SSH write failed (${code}): ${Buffer.concat(errChunks).toString()}`));
+					} else {
+						resolve();
+					}
+				});
+			});
 		},
 		mkdir: (dir) => sshExec(remote, `mkdir -p ${shQuote(toRemote(dir))}`).then(() => {}),
 	};
@@ -383,6 +399,32 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(`SSH mode: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`, "info");
 		} else {
 			setSshConfig(null);
+		}
+	});
+
+	// Cleanup on session end — resets resolvedSsh and clears shared state so stale
+	// SSH config does not persist across /reload or after the session finishes.
+	pi.on("session_end", async (_event, ctx) => {
+		if (resolvedSsh) {
+			setSshConfig(null);
+			resolvedSsh = null;
+			ctx.ui.setStatus("ssh", undefined);
+		}
+	});
+
+	// Safety net: reset state if the process is terminated or exits unexpectedly.
+	// This prevents orphaned SSH state when Pi crashes or is killed.
+	process.on("SIGTERM", () => {
+		if (resolvedSsh) {
+			setSshConfig(null);
+			resolvedSsh = null;
+		}
+	});
+
+	process.on("beforeExit", () => {
+		if (resolvedSsh) {
+			setSshConfig(null);
+			resolvedSsh = null;
 		}
 	});
 

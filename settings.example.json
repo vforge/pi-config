@@ -1,6 +1,6 @@
 {
-  "defaultProvider": "github-copilot",
-  "defaultModel": "gpt-5.5",
+  "defaultProvider": "local-openai",
+  "defaultModel": "qwen3.6-27b-balanced",
   "defaultThinkingLevel": "medium",
   "theme": "dark"
 }
