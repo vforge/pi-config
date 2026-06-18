@@ -107,6 +107,25 @@ Remote requirements:
 - `bash`
 - `rg` for the remote `grep` tool
 
+## Other installed packages
+
+Beyond this package's own extensions, the following third-party packages are installed globally:
+
+| Package | Source | Purpose |
+| --- | --- | --- |
+| `pi-emote` | `git:github.com/cgxeiji/pi-emote` | Emote/status flavor |
+| `pi-mcp-adapter` | `npm:pi-mcp-adapter` | MCP server proxy (filesystem, github) |
+| `@juicesharp/rpiv-btw` | `npm:@juicesharp/rpiv-btw` | BTW contextual notes skill |
+| `@juicesharp/rpiv-todo` | `npm:@juicesharp/rpiv-todo` | Todo management skill |
+| `@juicesharp/rpiv-ask-user-question` | `npm:@juicesharp/rpiv-ask-user-question` | Interactive user questions |
+| `pi-subagents` | `npm:pi-subagents` | Sub-agent orchestration (oracle, planner, researcher, etc.) |
+| `pi-goal-x` | `npm:pi-goal-x` | Goal management |
+| `pi-token-usage` | `npm:pi-token-usage` | Token usage tracking |
+| `@latent-variable/pi-auto-continue` | `npm:@latent-variable/pi-auto-continue` | Auto-continue sessions |
+| `@koltmcbride/pi-loop` | `npm:@koltmcbride/pi-loop` | Scheduled/repeating task loops |
+
+These are managed via `pi install` and tracked in `~/.pi/agent/settings.json` → `packages`.
+
 ## Machine-local files not included
 
 Do not commit/copy these from `~/.pi/agent`:
